@@ -371,6 +371,8 @@ def atmosphere_state_update(
     rdt = 1.0e0 / dt_atmos
 
     # *** Inelegant code that sets up data for fill_gfs stencil computation ***
+
+    # *** Reshape prsi and gq0 so that the i-dimension data is expanded in the i and j dimension
     gq0_temp = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
     gq0_temp[:,:,:79] = np.reshape(gq0[:,:,0],(12,12,79), order='F')
     prsi_temp = gt_storage.from_array(np.reshape(prsi,(12,12,80), order='F'),
