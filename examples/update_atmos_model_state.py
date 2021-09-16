@@ -101,20 +101,18 @@ def run(in_dict, in_dict_udp, in_dict_grid, grid, comm):
     v_dt = gt_storage.zeros(
         BACKEND, default_origin=(0, 0, 0), shape=in_dict["gv0"].shape, dtype=DTYPE_FLT
     )
-    t_dt = gt_storage.zeros(
-        BACKEND, default_origin=(0, 0, 0), shape=in_dict["gt0"].shape, dtype=DTYPE_FLT
-    )
+    t_dt = np.zeros(in_dict["gt0"].shape)
 
     q = np.zeros(
         (in_dict["qvapor"].shape[0], in_dict["qvapor"].shape[1], 8)
     )  # Assumption that there are 8 layers to q
 
-    q = gt_storage.zeros(
-        BACKEND,
-        default_origin=(0, 0, 0),
-        shape=(in_dict["qvapor"].shape[0], in_dict["qvapor"].shape[1], 8),
-        dtype=DTYPE_FLT,
-    )
+    # q = gt_storage.zeros(
+    #     BACKEND,
+    #     default_origin=(0, 0, 0),
+    #     shape=(in_dict["qvapor"].shape[0], in_dict["qvapor"].shape[1], 8),
+    #     dtype=DTYPE_FLT,
+    # )
 
     q[:, :, 0] = in_dict["qvapor"]
     q[:, :, 1] = in_dict["qliquid"]
@@ -156,7 +154,8 @@ def run(in_dict, in_dict_udp, in_dict_grid, grid, comm):
     # v     = gt_storage.from_array(in_dict["v"],    backend=BACKEND, default_origin=(0, 0, 0))
 
     w = gt_storage.from_array(in_dict["w"], backend=BACKEND, default_origin=(0, 0, 0))
-    pt = gt_storage.from_array(in_dict["pt"], backend=BACKEND, default_origin=(0, 0, 0))
+    # pt = gt_storage.from_array(in_dict["pt"], backend=BACKEND, default_origin=(0, 0, 0))
+    pt = in_dict["pt"]
     ua = gt_storage.from_array(in_dict["ua"], backend=BACKEND, default_origin=(0, 0, 0))
     va = gt_storage.from_array(in_dict["va"], backend=BACKEND, default_origin=(0, 0, 0))
     ps = gt_storage.from_array(in_dict["ps"], backend=BACKEND, default_origin=(0, 0, 0))
@@ -410,13 +409,33 @@ def atmosphere_state_update(
     # Note : pe has shape (14,80,14)
     #        peln has shape(12,80,12)
 
+    # Set qvapor, qliquid, qrain, qsnow, qice, qgraupel, t_dt, and pt into 3D storages
+    qvapor = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    qvapor[:,:,:79] = np.reshape(q[:,:,0],(12,12,79), order='F')
+    qliquid = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    qliquid[:,:,:79] = np.reshape(q[:,:,1],(12,12,79), order='F')
+    qrain = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    qrain[:,:,:79] = np.reshape(q[:,:,2],(12,12,79), order='F')
+    qsnow = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    qsnow[:,:,:79] = np.reshape(q[:,:,3],(12,12,79), order='F')
+    qice = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    qice[:,:,:79] = np.reshape(q[:,:,4],(12,12,79), order='F')
+    qgraupel = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    qgraupel[:,:,:79] = np.reshape(q[:,:,5],(12,12,79), order='F')
+
+    t_dt_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    t_dt_3D[:,:,:79] = np.reshape(t_dt,(12,12,79), order='F')
+
+    pt_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    pt_3D[:,:,:79] = np.reshape(pt,(12,12,79),order='F')
+
     pe, peln, pk, ps, pt, u_srf, v_srf, u_dt, v_dt, u, v = fv_update_phys(
         dt_atmos,
         u,
         v,
         w,
         delp,
-        pt,
+        pt_3D,
         ua,
         va,
         ps,
@@ -430,23 +449,28 @@ def atmosphere_state_update(
         False,
         u_dt,
         v_dt,
-        t_dt,
+        t_dt_3D,
         False,
         0,
         0,
         0,
         False,
-        q[:, :, 0],
-        q[:, :, 1],
-        q[:, :, 2],
-        q[:, :, 3],
-        q[:, :, 4],
-        q[:, :, 5],
+        qvapor,
+        qliquid,
+        qrain,
+        qsnow,
+        qice,
+        qgraupel,
         nwat,
         grid,
         comm,
         in_dict_udp,
     )
+
+    pt_3D = np.zeros(pt.shape)
+    pt_3D[:,:,:] = pt[:,:,:]
+
+    pt = np.reshape(pt_3D[:,:,:79], (144,79), order='F')
 
     return (
         u_dt,
@@ -645,20 +669,22 @@ def fv_update_phys(
     # je = u_srf.shape[1]+js
     npz = 79
 
-    for k in range(npz):
-        # For testing, hard code the range of j
-        # for j in range(js,je):
-        for j in range(12):
-            # Note : There's already a GT4Py-ported version of moist_cv
-            qc, cvm = moist_cv(
-                j, k, nwat, qvapor, qliquid, qrain, qsnow, qice, qgraupel, qc, cvm
-            )
+    # for k in range(npz):
+    #     # For testing, hard code the range of j
+    #     # for j in range(js,je):
+    #     for j in range(12):
+    #         # Note : There's already a GT4Py-ported version of moist_cv
+    #         qc, cvm = moist_cv(
+    #             j, k, nwat, qvapor, qliquid, qrain, qsnow, qice, qgraupel, qc, cvm
+    #         )
 
-            for i in range(12):
-                # pt[i,j,k] = pt[i,j,k] + t_dt[i-3,j-3,k] * dt * con_cp/cvm[i-3]
-                pt[j * 12 + i, k] = (
-                    pt[j * 12 + i, k] + t_dt[j * 12 + i, k] * dt * con_cp / cvm[i - 3]
-                )
+    #         for i in range(12):
+    #             # pt[i,j,k] = pt[i,j,k] + t_dt[i-3,j-3,k] * dt * con_cp/cvm[i-3]
+    #             pt[j * 12 + i, k] = (
+    #                 pt[j * 12 + i, k] + t_dt[j * 12 + i, k] * dt * con_cp / cvm[i]#cvm[i - 3]
+    #             )
+
+    moist_cv(qvapor, qliquid, qrain, qsnow, qice, qgraupel, pt, t_dt, con_cp, float(dt))
 
     # Note : The shape of these u_dt and v_dt storages is based on C12 dataset
     u_dt_q = gt_storage.zeros(
@@ -736,37 +762,48 @@ def fv_update_phys(
     )
 
 
-# Note : There already exists a moist_cv stencil within fv3core
-def moist_cv(j, k, nwat, qvapor, qliquid, qrain, qsnow, qice, qgraupel, qd, cvm):
+# # Note : There already exists a moist_cv stencil within fv3core
+# def moist_cv(j, k, nwat, qvapor, qliquid, qrain, qsnow, qice, qgraupel, qd, cvm):
 
-    # Note: Fortran code has a select case contruct to select how to
-    #       update qv, ql, qs, and qd.
-    #       Currently we're only implementing case(6)
+#     for i in range(12):
+#         qv = qvapor[j * 12 + i, k]
+#         ql = qliquid[j * 12 + i, k] + qrain[j * 12 + i, k]
+#         qs = qice[j * 12 + i, k] + qsnow[j * 12 + i, k] + qgraupel[j * 12 + i, k]
+#         qd[i] = ql + qs
+#         cvm[i] = (1.0 - (qv + qd[i])) * cv_air + qv * cv_vap + ql * c_liq + qs * c_ice
 
-    # $$$ Previous moist_cv implementation $$$
+#     return qd, cvm
 
-    # qvapor, qliquid, qrain, qsnow, qice, and qgraupel have halo regions in i and j,
-    # so their index in i have to be incremented by 3 to account for the halo.  The j
-    # index as a input parameter already takes takes the halo into consideration
+# NOTE: This is copied from moist_cv.py in fv3core
+@gtscript.function
+def moist_cvm(qvapor, gz, ql, qs):
+    cvm = (
+        (1.0 - (qvapor + gz)) * cv_air
+        + qvapor * cv_vap
+        + ql * c_liq
+        + qs * c_ice
+    )
+    return cvm
 
-    # for i in range(qd.shape[0]):
-    #     qv = qvapor[i+3, j, k]
-    #     ql = qliquid[i+3, j, k] + qrain[i+3, j, k]
-    #     qs = qice[i+3, j, k] + qsnow[i+3, j, k] + qgraupel[i+3, j, k]
-    #     qd[i] = ql + qs
-    #     cvm[i] = (1.0 - (qv + qd[i])) * cv_air + qv * cv_vap + ql * c_liq + qs * c_ice
-
-    # $$$$$$
-
-    for i in range(12):
-        qv = qvapor[j * 12 + i, k]
-        ql = qliquid[j * 12 + i, k] + qrain[j * 12 + i, k]
-        qs = qice[j * 12 + i, k] + qsnow[j * 12 + i, k] + qgraupel[j * 12 + i, k]
-        qd[i] = ql + qs
-        cvm[i] = (1.0 - (qv + qd[i])) * cv_air + qv * cv_vap + ql * c_liq + qs * c_ice
-
-    return qd, cvm
-
+# NOTE : This is based off of moist_cv_nwat6_fn gt4py function in moist_cv.py in fv3core
+@gtscript.stencil(backend=BACKEND)
+def moist_cv(qvapor: FIELD_FLT,
+             qliquid: FIELD_FLT,
+             qrain: FIELD_FLT,
+             qsnow: FIELD_FLT,
+             qice: FIELD_FLT,
+             qgraupel: FIELD_FLT,
+             pt: FIELD_FLT,
+             t_dt: FIELD_FLT,
+             con_cp: float,
+             dt: float,
+):
+    with computation(PARALLEL), interval(...):
+        ql = qliquid + qrain
+        qs = qice + qsnow + qgraupel
+        gz = ql + qs
+        cvm = moist_cvm(qvapor, gz, ql, qs)
+        pt = pt + t_dt * dt*con_cp / cvm
 
 C1 = 1.125
 C2 = -0.125
