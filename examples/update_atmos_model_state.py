@@ -147,23 +147,29 @@ def run(in_dict, in_dict_udp, in_dict_grid, grid, comm):
     prsi = gt_storage.from_array(
         in_dict["prsi"], backend=BACKEND, default_origin=(0, 0, 0)
     )
-    delp = gt_storage.from_array(
-        in_dict["delp"], backend=BACKEND, default_origin=(0, 0, 0)
-    )
+    # delp = gt_storage.from_array(
+    #     in_dict["delp"], backend=BACKEND, default_origin=(0, 0, 0)
+    # )
+    delp = in_dict["delp"]
     # u     = gt_storage.from_array(in_dict["u"],    backend=BACKEND, default_origin=(0, 0, 0))
     # v     = gt_storage.from_array(in_dict["v"],    backend=BACKEND, default_origin=(0, 0, 0))
 
     w = gt_storage.from_array(in_dict["w"], backend=BACKEND, default_origin=(0, 0, 0))
     # pt = gt_storage.from_array(in_dict["pt"], backend=BACKEND, default_origin=(0, 0, 0))
     pt = in_dict["pt"]
-    ua = gt_storage.from_array(in_dict["ua"], backend=BACKEND, default_origin=(0, 0, 0))
-    va = gt_storage.from_array(in_dict["va"], backend=BACKEND, default_origin=(0, 0, 0))
+    # ua = gt_storage.from_array(in_dict["ua"], backend=BACKEND, default_origin=(0, 0, 0))
+    ua = in_dict["ua"]
+    # va = gt_storage.from_array(in_dict["va"], backend=BACKEND, default_origin=(0, 0, 0))
+    va = in_dict["va"]
     ps = gt_storage.from_array(in_dict["ps"], backend=BACKEND, default_origin=(0, 0, 0))
-    pe = gt_storage.from_array(in_dict["pe"], backend=BACKEND, default_origin=(0, 0, 0))
-    peln = gt_storage.from_array(
-        in_dict["peln"], backend=BACKEND, default_origin=(0, 0, 0)
-    )
-    pk = gt_storage.from_array(in_dict["pk"], backend=BACKEND, default_origin=(0, 0, 0))
+    # pe = gt_storage.from_array(in_dict["pe"], backend=BACKEND, default_origin=(0, 0, 0))
+    pe = in_dict["pe"]
+    # peln = gt_storage.from_array(
+    #     in_dict["peln"], backend=BACKEND, default_origin=(0, 0, 0)
+    # )
+    peln = in_dict["peln"]
+    # pk = gt_storage.from_array(in_dict["pk"], backend=BACKEND, default_origin=(0, 0, 0))
+    pk = in_dict["pk"]
     pkz = gt_storage.from_array(
         in_dict["pkz"], backend=BACKEND, default_origin=(0, 0, 0)
     )
@@ -429,6 +435,24 @@ def atmosphere_state_update(
     pt_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
     pt_3D[:,:,:79] = np.reshape(pt,(12,12,79),order='F')
 
+    u_dt_3D = gt_storage.zeros(
+        BACKEND, default_origin=(0, 0, 0), shape=(19, 19, 80), dtype=DTYPE_FLT
+    )
+    v_dt_3D = gt_storage.zeros(
+        BACKEND, default_origin=(0, 0, 0), shape=(19, 19, 80), dtype=DTYPE_FLT
+    )
+
+    for k in range(npz):
+        for i in range(u_dt.shape[0]):
+            i1 = 3 + np.mod(i, 12)
+            j1 = 3 + int(i / 12)
+            # print(i1, j1)
+            u_dt_3D[i1, j1, k] = u_dt[i, k]
+            v_dt_3D[i1, j1, k] = v_dt[i, k]
+
+    pe = np.swapaxes(pe, 1, 2)
+    peln = np.swapaxes(peln, 1, 2)
+
     pe, peln, pk, ps, pt, u_srf, v_srf, u_dt, v_dt, u, v = fv_update_phys(
         dt_atmos,
         u,
@@ -447,8 +471,8 @@ def atmosphere_state_update(
         u_srf,
         v_srf,
         False,
-        u_dt,
-        v_dt,
+        u_dt_3D,
+        v_dt_3D,
         t_dt_3D,
         False,
         0,
@@ -466,6 +490,9 @@ def atmosphere_state_update(
         comm,
         in_dict_udp,
     )
+
+    pe = np.swapaxes(pe, 1, 2)
+    peln = np.swapaxes(peln, 1, 2)
 
     pt_3D = np.zeros(pt.shape)
     pt_3D[:,:,:] = pt[:,:,:]
@@ -648,10 +675,6 @@ def fv_update_phys(
     # column_moistening_implied_by_nudging, q_dt
     hydrostatic = False
     con_cp = cp_air
-    # cvm = np.zeros(pk.shape[0])
-    # qc  = np.zeros(pk.shape[0])
-    cvm = np.zeros(12)
-    qc = np.zeros(12)
 
     # Hard coded tracer indexes : Maybe dynamically set these later?
     sphum = 0
@@ -662,47 +685,12 @@ def fv_update_phys(
     graupel = 5
     cld_amt = 8
 
-    # is_ = int((ua.shape[0]-u_srf.shape[0]) / 2)
-    # ie = u_srf.shape[0]+is_
-
-    # js = int((ua.shape[1]-u_srf.shape[1]) / 2)
-    # je = u_srf.shape[1]+js
     npz = 79
-
-    # for k in range(npz):
-    #     # For testing, hard code the range of j
-    #     # for j in range(js,je):
-    #     for j in range(12):
-    #         # Note : There's already a GT4Py-ported version of moist_cv
-    #         qc, cvm = moist_cv(
-    #             j, k, nwat, qvapor, qliquid, qrain, qsnow, qice, qgraupel, qc, cvm
-    #         )
-
-    #         for i in range(12):
-    #             # pt[i,j,k] = pt[i,j,k] + t_dt[i-3,j-3,k] * dt * con_cp/cvm[i-3]
-    #             pt[j * 12 + i, k] = (
-    #                 pt[j * 12 + i, k] + t_dt[j * 12 + i, k] * dt * con_cp / cvm[i]#cvm[i - 3]
-    #             )
 
     moist_cv(qvapor, qliquid, qrain, qsnow, qice, qgraupel, pt, t_dt, con_cp, float(dt))
 
-    # Note : The shape of these u_dt and v_dt storages is based on C12 dataset
-    u_dt_q = gt_storage.zeros(
-        BACKEND, default_origin=(0, 0, 0), shape=(19, 19, 80), dtype=DTYPE_FLT
-    )
-    v_dt_q = gt_storage.zeros(
-        BACKEND, default_origin=(0, 0, 0), shape=(19, 19, 80), dtype=DTYPE_FLT
-    )
-    for k in range(npz):
-        for i in range(u_dt.shape[0]):
-            i1 = 3 + np.mod(i, 12)
-            j1 = 3 + int(i / 12)
-            # print(i1, j1)
-            u_dt_q[i1, j1, k] = u_dt[i, k]
-            v_dt_q[i1, j1, k] = v_dt[i, k]
-
-    u_dt_quan = grid.make_quantity(u_dt_q)
-    v_dt_quan = grid.make_quantity(v_dt_q)
+    u_dt_quan = grid.make_quantity(u_dt)
+    v_dt_quan = grid.make_quantity(v_dt)
 
     # Note : This is the "easy all encompassing" halo exchange for testing purposes
     # For the OOP version, there should be a comm.get_scalar_halo_updater object
@@ -712,22 +700,22 @@ def fv_update_phys(
     for j in range(12):
         for k in range(1, npz + 1):
             for i in range(12):
-                pe[i + 1, k, j + 1] = pe[i + 1, k - 1, j + 1] + delp[12 * j + i, k - 1]
-                peln[i, k, j] = np.log(pe[i + 1, k, j + 1])
-                pk[12 * j + i, k] = np.exp(KAPPA * peln[i, k, j])
+                pe[i + 1, j + 1, k] = pe[i + 1, j + 1, k - 1] + delp[12 * j + i, k - 1]
+                peln[i, j, k] = np.log(pe[i + 1, j + 1, k])
+                pk[12 * j + i, k] = np.exp(KAPPA * peln[i, j, k])
 
         for i in range(12):
-            ps[12 * j + i] = pe[i + 1, npz, j + 1]
+            ps[12 * j + i] = pe[i + 1, j + 1, npz]
             u_srf[12 * j + i] = ua[12 * j + i, npz - 1]
             v_srf[12 * j + i] = va[12 * j + i, npz - 1]
 
     # req.wait()
 
-    u_dt_q[:, :, :] = u_dt_quan.storage[:, :, :]
-    v_dt_q[:, :, :] = v_dt_quan.storage[:, :, :]
+    u_dt[:, :, :] = u_dt_quan.storage[:, :, :]
+    v_dt[:, :, :] = v_dt_quan.storage[:, :, :]
 
-    in_dict_udp["u_dt"] = u_dt_q
-    in_dict_udp["v_dt"] = v_dt_q
+    in_dict_udp["u_dt"] = u_dt
+    in_dict_udp["v_dt"] = v_dt
     in_dict_udp["u"] = u
     in_dict_udp["v"] = v
 
