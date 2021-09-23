@@ -442,6 +442,12 @@ def atmosphere_state_update(
         BACKEND, default_origin=(0, 0, 0), shape=(19, 19, 80), dtype=DTYPE_FLT
     )
 
+    delp_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    delp_3D[:,:,:79] = np.reshape(delp, (12, 12, 79), order='F')
+
+    pk_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
+    pk_3D[:,:,:] = np.reshape(pk, (12, 12, 80), order='F')
+
     for k in range(npz):
         for i in range(u_dt.shape[0]):
             i1 = 3 + np.mod(i, 12)
@@ -458,14 +464,14 @@ def atmosphere_state_update(
         u,
         v,
         w,
-        delp,
+        delp_3D,
         pt_3D,
         ua,
         va,
         ps,
         pe,
         peln,
-        pk,
+        pk_3D,
         pkz,
         phis,
         u_srf,
@@ -496,8 +502,11 @@ def atmosphere_state_update(
 
     pt_3D = np.zeros(pt.shape)
     pt_3D[:,:,:] = pt[:,:,:]
-
     pt = np.reshape(pt_3D[:,:,:79], (144,79), order='F')
+
+    pk_3D = np.zeros(pk.shape)
+    pk_3D[:,:,:] = pk[:,:,:]
+    pk = np.reshape(pk_3D, (144,80), order='F')
 
     return (
         u_dt,
@@ -700,9 +709,9 @@ def fv_update_phys(
     for j in range(12):
         for k in range(1, npz + 1):
             for i in range(12):
-                pe[i + 1, j + 1, k] = pe[i + 1, j + 1, k - 1] + delp[12 * j + i, k - 1]
+                pe[i + 1, j + 1, k] = pe[i + 1, j + 1, k - 1] + delp[i, j, k - 1]
                 peln[i, j, k] = np.log(pe[i + 1, j + 1, k])
-                pk[12 * j + i, k] = np.exp(KAPPA * peln[i, j, k])
+                pk[i,j, k] = np.exp(KAPPA * peln[i, j, k])
 
         for i in range(12):
             ps[12 * j + i] = pe[i + 1, j + 1, npz]
