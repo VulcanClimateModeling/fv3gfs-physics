@@ -15,6 +15,9 @@ from gt4py.gtscript import (
     interval,
     horizontal,
     region,
+    exp,
+    log,
+    BACKWARD, FORWARD
 )
 
 from mpi4py import MPI
@@ -333,6 +336,35 @@ def fill_gfs(pe2 : FIELD_FLT,
         if q[0,0,0] < 0.0:
             q = 0.0
 
+@gtscript.stencil(backend=BACKEND)
+def p_update(pe: FIELD_FLT,
+            delp: FIELD_FLT,
+            peln: FIELD_FLT,
+            pk: FIELD_FLT,
+            KAPPA: float,):
+    # Note: this computation cannot be set to PARALLEL and verify
+    with computation(FORWARD), interval(1,None):
+        with horizontal(region[4:16, 4:16]):
+            pe = pe[0,0,-1] + delp[-1,-1,-1]
+    with computation(PARALLEL), interval(1,None):
+        with horizontal(region[3:15, 3:15]):
+            peln = log(pe[1,1,0])
+            pk = exp(KAPPA * peln[0,0,0])
+
+# @gtscript.stencil(backend=BACKEND)
+# def surf_update(ps: FIELD_FLTIJ,
+#                 pe: FIELD_FLT,
+#                 u_srf: FIELD_FLTIJ,
+#                 v_surf: FIELD_FLTIJ,
+#                 ua: FIELD_FLT,
+#                 va: FIELD_FLT
+#                 ):
+#     with computation(PARALLEL), interval(-2,-1):
+#         with horizontal(region[3:15,3:15]):
+#             pe = ps[0,0]
+#             # u_srf = ua[0,0,-1]
+#             # v_srf = va[0,0,-1]
+
 def atmosphere_state_update(
     gq0,
     gt0,
@@ -442,11 +474,12 @@ def atmosphere_state_update(
         BACKEND, default_origin=(0, 0, 0), shape=(19, 19, 80), dtype=DTYPE_FLT
     )
 
-    delp_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
-    delp_3D[:,:,:79] = np.reshape(delp, (12, 12, 79), order='F')
+    # Note: These 3D mapping transformations only apply to the C12 example
+    delp_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19,80), default_origin=(0,0,0))
+    delp_3D[3:15,3:15,:79] = np.reshape(delp, (12, 12, 79), order='F')
 
-    pk_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(12,12,80), default_origin=(0,0,0))
-    pk_3D[:,:,:] = np.reshape(pk, (12, 12, 80), order='F')
+    pk_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19,80), default_origin=(0,0,0))
+    pk_3D[3:15,3:15,:] = np.reshape(pk, (12, 12, 80), order='F')
 
     for k in range(npz):
         for i in range(u_dt.shape[0]):
@@ -456,26 +489,45 @@ def atmosphere_state_update(
             u_dt_3D[i1, j1, k] = u_dt[i, k]
             v_dt_3D[i1, j1, k] = v_dt[i, k]
 
-    pe = np.swapaxes(pe, 1, 2)
-    peln = np.swapaxes(peln, 1, 2)
+    # pe = np.swapaxes(pe, 1, 2)
+    pe_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19,80), default_origin=(0,0,0))
+    pe_3D[3:17,3:17,:] = np.swapaxes(pe, 1, 2)[:,:,:]
+    # peln = np.swapaxes(peln, 1, 2)
+    peln_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19,80), default_origin=(0,0,0))
+    peln_3D[3:15, 3:15,:] = np.swapaxes(peln, 1, 2)[:,:,:]
 
-    pe, peln, pk, ps, pt, u_srf, v_srf, u_dt, v_dt, u, v = fv_update_phys(
+    ua_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19,80), default_origin=(0,0,0))
+    ua_3D[3:15,3:15,:79] = np.reshape(ua, (12, 12, 79), order='F')
+
+    va_3D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19,80), default_origin=(0,0,0))
+    va_3D[3:15,3:15,:79] = np.reshape(va, (12, 12, 79), order='F')
+
+    ps_2D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19), default_origin=(0,0,0))
+    ps_2D[3:15, 3:15] = np.reshape(ps, (12, 12,), order='F')
+
+    u_srf_2D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19), default_origin=(0,0,0))
+    u_srf_2D[3:15,3:15] = np.reshape(u_srf,(12,12), order='F')
+
+    v_srf_2D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19), default_origin=(0,0,0))
+    v_srf_2D[3:15,3:15] = np.reshape(v_srf,(12,12), order='F')
+
+    pe_out, peln_out, pk_out, ps_out, pt_out, u_srf_out, v_srf_out, u_dt, v_dt, u, v = fv_update_phys(
         dt_atmos,
         u,
         v,
         w,
         delp_3D,
         pt_3D,
-        ua,
-        va,
-        ps,
-        pe,
-        peln,
+        ua_3D,
+        va_3D,
+        ps_2D,
+        pe_3D,
+        peln_3D,
         pk_3D,
         pkz,
         phis,
-        u_srf,
-        v_srf,
+        u_srf_2D,
+        v_srf_2D,
         False,
         u_dt_3D,
         v_dt_3D,
@@ -497,16 +549,35 @@ def atmosphere_state_update(
         in_dict_udp,
     )
 
-    pe = np.swapaxes(pe, 1, 2)
-    peln = np.swapaxes(peln, 1, 2)
+    # pe = np.swapaxes(pe, 1, 2)
+    pe_3D = np.zeros((14,14,80))
+    pe_3D[:,:,:] = pe_out[3:17,3:17,:]
+    pe = np.swapaxes(pe_3D,1,2)
 
-    pt_3D = np.zeros(pt.shape)
-    pt_3D[:,:,:] = pt[:,:,:]
+    # peln = np.swapaxes(peln, 1, 2)
+    peln_3D = np.zeros((12, 12, 80))
+    peln_3D = peln_out[3:15, 3:15,:]
+    peln = np.swapaxes(peln_3D, 1, 2)
+
+    pt_3D = np.zeros(pt_out.shape)
+    pt_3D[:,:,:] = pt_out[:,:,:]
     pt = np.reshape(pt_3D[:,:,:79], (144,79), order='F')
 
-    pk_3D = np.zeros(pk.shape)
-    pk_3D[:,:,:] = pk[:,:,:]
-    pk = np.reshape(pk_3D, (144,80), order='F')
+    pk_3D = np.zeros(pk_out.shape)
+    pk_3D[:,:,:] = pk_out[:,:,:]
+    pk = np.reshape(pk_3D[3:15,3:15,:], (144,80), order='F')
+
+    ps_2D = np.zeros(ps_out.shape)
+    ps_2D[:,:] = ps_out[:,:]
+    ps[:] = np.reshape(ps_2D[3:15,3:15],(144,),order='F')
+
+    u_srf_2D = np.zeros(u_srf_out.shape)
+    u_srf_2D[:,:] = u_srf_out[:,:]
+    u_srf[:] = np.reshape(u_srf_2D[3:15,3:15],(144,),order='F')
+
+    v_srf_2D = np.zeros(v_srf_out.shape)
+    v_srf_2D[:,:] = v_srf_out[:,:]
+    v_srf[:] = np.reshape(v_srf_2D[3:15,3:15],(144,),order='F')
 
     return (
         u_dt,
@@ -706,17 +777,32 @@ def fv_update_phys(
     # that's used for the halo update
     # req = comm.start_halo_update([u_dt_quan, v_dt_quan], 1)
 
-    for j in range(12):
-        for k in range(1, npz + 1):
-            for i in range(12):
-                pe[i + 1, j + 1, k] = pe[i + 1, j + 1, k - 1] + delp[i, j, k - 1]
-                peln[i, j, k] = np.log(pe[i + 1, j + 1, k])
-                pk[i,j, k] = np.exp(KAPPA * peln[i, j, k])
+    # for j in range(12):
+    #     for k in range(1, npz + 1):
+    #         for i in range(12):
+    #             pe[i + 1, j + 1, k] = pe[i + 1, j + 1, k - 1] + delp[i, j, k - 1]
+    #             peln[i, j, k] = np.log(pe[i + 1, j + 1, k])
+    #             pk[i,j, k] = np.exp(KAPPA * peln[i, j, k])
 
+    #     for i in range(12):
+    #         ps[12 * j + i] = pe[i + 1, j + 1, npz]
+    #         u_srf[12 * j + i] = ua[12 * j + i, npz - 1]
+    #         v_srf[12 * j + i] = va[12 * j + i, npz - 1]
+
+    # for k in range(1, npz + 1):
+    #     for j in range(12):
+    #         for i in range(12):
+    #             pe[i + 4, j + 4, k] = pe[i + 4, j + 4, k - 1] + delp[i+3, j+3, k - 1]
+    #             peln[i+3, j+3, k] = np.log(pe[i + 4, j + 4, k])
+    #             pk[i+3,j+3, k] = np.exp(KAPPA * peln[i+3, j+3, k])
+
+    p_update(pe, delp, peln, pk, KAPPA)
+
+    for j in range(12):
         for i in range(12):
-            ps[12 * j + i] = pe[i + 1, j + 1, npz]
-            u_srf[12 * j + i] = ua[12 * j + i, npz - 1]
-            v_srf[12 * j + i] = va[12 * j + i, npz - 1]
+            ps[i+3, j+3] = pe[i + 4, j + 4, npz]
+            u_srf[i+3,j+3] = ua[i+3, j+3, npz - 1]
+            v_srf[i+3,j+3] = va[i+3, j+3, npz - 1]
 
     # req.wait()
 
