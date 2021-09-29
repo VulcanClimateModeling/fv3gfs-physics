@@ -344,6 +344,9 @@ def p_update(pe: FIELD_FLT,
             KAPPA: float,):
     # Note: this computation cannot be set to PARALLEL and verify
     with computation(FORWARD), interval(1,None):
+    # Note : I may be egregiously using horizontal regions in this case when
+    #        being more specific about the origin and specifying a range for the
+    #        stencil may be more appropriate
         with horizontal(region[4:16, 4:16]):
             pe = pe[0,0,-1] + delp[-1,-1,-1]
     with computation(PARALLEL), interval(1,None):
@@ -351,19 +354,20 @@ def p_update(pe: FIELD_FLT,
             peln = log(pe[1,1,0])
             pk = exp(KAPPA * peln[0,0,0])
 
-# @gtscript.stencil(backend=BACKEND)
-# def surf_update(ps: FIELD_FLTIJ,
-#                 pe: FIELD_FLT,
-#                 u_srf: FIELD_FLTIJ,
-#                 v_surf: FIELD_FLTIJ,
-#                 ua: FIELD_FLT,
-#                 va: FIELD_FLT
-#                 ):
-#     with computation(PARALLEL), interval(-2,-1):
-#         with horizontal(region[3:15,3:15]):
-#             pe = ps[0,0]
-#             # u_srf = ua[0,0,-1]
-#             # v_srf = va[0,0,-1]
+@gtscript.stencil(backend=BACKEND)
+def surf_update(ps: FIELD_FLTIJ,
+                pe: FIELD_FLT,
+                u_srf: FIELD_FLTIJ,
+                v_srf: FIELD_FLTIJ,
+                ua: FIELD_FLT,
+                va: FIELD_FLT
+                ):
+    # Note : I think the interval should be (-2,-1), but it does not verify with that interval
+    with computation(FORWARD), interval(-1,None):
+        with horizontal(region[3:15,3:15]):
+            ps = pe[1,1,0]
+            u_srf = ua[0,0,-1]
+            v_srf = va[0,0,-1]
 
 def atmosphere_state_update(
     gq0,
@@ -505,7 +509,7 @@ def atmosphere_state_update(
     ps_2D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19), default_origin=(0,0,0))
     ps_2D[3:15, 3:15] = np.reshape(ps, (12, 12,), order='F')
 
-    u_srf_2D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19), default_origin=(0,0,0))
+    u_srf_2D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19,), default_origin=(0,0,0))
     u_srf_2D[3:15,3:15] = np.reshape(u_srf,(12,12), order='F')
 
     v_srf_2D = gt_storage.zeros(backend=BACKEND, dtype=DTYPE_FLT,shape=(19,19), default_origin=(0,0,0))
@@ -797,12 +801,13 @@ def fv_update_phys(
     #             pk[i+3,j+3, k] = np.exp(KAPPA * peln[i+3, j+3, k])
 
     p_update(pe, delp, peln, pk, KAPPA)
+    surf_update(ps, pe, u_srf, v_srf, ua, va)
 
-    for j in range(12):
-        for i in range(12):
-            ps[i+3, j+3] = pe[i + 4, j + 4, npz]
-            u_srf[i+3,j+3] = ua[i+3, j+3, npz - 1]
-            v_srf[i+3,j+3] = va[i+3, j+3, npz - 1]
+    # for j in range(12):
+    #     for i in range(12):
+    #         ps[i+3, j+3] = pe[i + 4, j + 4, npz]
+    #         u_srf[i+3,j+3] = ua[i+3, j+3, npz - 1]
+    #         v_srf[i+3,j+3] = va[i+3, j+3, npz - 1]
 
     # req.wait()
 
