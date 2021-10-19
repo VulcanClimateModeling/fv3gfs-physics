@@ -294,10 +294,10 @@ class Physics:
             physics_state.pt[:, :, 0:-1], (npx_npy, self.grid.npz)
         )[:, ::-1].T
         self._emulation_dict["specific_humidity_input"] = np.reshape(
-            physics_state.qvapor, (npx_npy, self.grid.npz)
+            physics_state.qvapor[:, :, 0:-1], (npx_npy, self.grid.npz)
         )[:, ::-1].T
         self._emulation_dict["cloud_water_mixing_ratio_input"] = np.reshape(
-            physics_state.qliquid, (npx_npy, self.grid.npz)
+            physics_state.qliquid[:, :, 0:-1], (npx_npy, self.grid.npz)
         )[:, ::-1].T
         predictions = self._emulation_model(self._emulation_dict)
         model_outputs = self.unpack_predictions(
