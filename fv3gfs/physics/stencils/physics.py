@@ -292,13 +292,13 @@ class Physics:
         npx_npy = np1 * np2
         self._emulation_dict["air_temperature_input"] = np.reshape(
             physics_state.pt[:, :, 0:-1], (npx_npy, self.grid.npz)
-        )[:, :, ::-1].T
+        )[:, ::-1].T
         self._emulation_dict["specific_humidity_input"] = np.reshape(
             physics_state.qvapor, (npx_npy, self.grid.npz)
-        )[:, :, ::-1].T
+        )[:, ::-1].T
         self._emulation_dict["cloud_water_mixing_ratio_input"] = np.reshape(
             physics_state.qliquid, (npx_npy, self.grid.npz)
-        )[:, :, ::-1].T
+        )[:, ::-1].T
         predictions = self._emulation_model(self._emulation_dict)
         model_outputs = self.unpack_predictions(
             predictions, self._emulation_model.output_names, np1, np2
