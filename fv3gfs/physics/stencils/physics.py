@@ -164,15 +164,17 @@ def update_physics_state_with_tendencies(
 
 class Physics:
     def __init__(
-        self, grid, namelist, comm: fv3gfs.util.CubedSphereCommunicator, grid_info
+            self, grid, namelist, comm: fv3gfs.util.CubedSphereCommunicator, grid_info, ptop=300.0
     ):
         self.grid = grid
         self.namelist = namelist
         origin = self.grid.compute_origin()
         shape = self.grid.domain_shape_full(add=(1, 1, 1))
+        self._ptop = ptop
         self.setup_statein()
+        self._pktop = (self._ptop / self._p00) ** KAPPA
+        self._pk0inv = (1.0 / self._p00) ** KAPPA
         self._dt_atmos = Float(self.namelist.dt_atmos)
-        self._ptop = 300.0  # hard coded before we can call ak from grid: state["ak"][0]
         self._pktop = (self._ptop / self._p00) ** KAPPA
         self._pk0inv = (1.0 / self._p00) ** KAPPA
         self._prsi = utils.make_storage_from_shape(shape, origin=origin, init=True)
@@ -224,14 +226,9 @@ class Physics:
         self._nwat = 6  # spec.namelist.nwat
         self._p00 = 1.0e5
 
-    def setup_const_from_state(self, state: dict):
-        self._ptop = state["ak"][0]
-        self._pktop = (self._ptop / self._p00) ** KAPPA
-        self._pk0inv = (1.0 / self._p00) ** KAPPA
-
-    def __call__(self, state: dict):
-        self.setup_const_from_state(state)
-        state = get_namespace(DynamicalCore.arg_specs, state)
+    def __call__(self, state):
+      
+        #state = get_namespace(DynamicalCore.arg_specs, state)
         physics_state = PhysicsState.from_dycore_state(state, self._full_zero_storage)
         self._atmos_phys_driver_statein(
             self._prsik,
