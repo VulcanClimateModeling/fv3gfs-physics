@@ -2,12 +2,12 @@ from fv3gfs.physics.physics_state import PhysicsState
 from fv3gfs.physics.stencils.get_phi_fv3 import get_phi_fv3
 from fv3gfs.physics.stencils.get_prs_fv3 import get_prs_fv3
 from fv3gfs.physics.stencils.microphysics import Microphysics, MicrophysicsState
-from fv3gfs.physics.stencils.update_atmos_state import UpdateAtmosphereState
+#from fv3gfs.physics.stencils.update_atmos_state import UpdateAtmosphereState
 from fv3gfs.physics.global_constants import *
 import fv3gfs.util
 import fv3core.utils.gt4py_utils as utils
 from fv3core.utils.typing import FloatField, Float
-from fv3core.decorators import FrozenStencil, get_namespace
+from fv3core.decorators import FrozenStencil
 import gt4py.gtscript as gtscript
 from gt4py.gtscript import (
     PARALLEL,
@@ -21,6 +21,7 @@ import numpy as np  # used for debugging only
 from fv3core.stencils.fv_dynamics import DynamicalCore  # need argspecs for state
 
 
+        
 def atmos_phys_driver_statein(
     prsik: FloatField,
     phii: FloatField,
@@ -53,6 +54,7 @@ def atmos_phys_driver_statein(
         qsnow = qsnow * delp
         qgraupel = qgraupel * delp
         qo3mr = qo3mr * delp
+        qsgs_tke = qsgs_tke * delp
     # The following needs to execute after the above (TODO)
     with computation(PARALLEL), interval(...):
         if nwat == 6:
@@ -163,9 +165,7 @@ def update_physics_state_with_tendencies(
 
 
 class Physics:
-    def __init__(
-            self, grid, namelist, comm: fv3gfs.util.CubedSphereCommunicator, grid_info, ptop=300.0
-    ):
+    def __init__(self, grid, namelist, ptop=300.0):
         self.grid = grid
         self.namelist = namelist
         origin = self.grid.compute_origin()
@@ -177,13 +177,13 @@ class Physics:
         self._dt_atmos = Float(self.namelist.dt_atmos)
         self._pktop = (self._ptop / self._p00) ** KAPPA
         self._pk0inv = (1.0 / self._p00) ** KAPPA
-        self._prsi = utils.make_storage_from_shape(shape, origin=origin, init=True)
         self._prsik = utils.make_storage_from_shape(shape, origin=origin, init=True)
         self._dm3d = utils.make_storage_from_shape(shape, origin=origin, init=True)
         self._del_gz = utils.make_storage_from_shape(shape, origin=origin, init=True)
         self._full_zero_storage = utils.make_storage_from_shape(
             shape, origin=origin, init=True
         )
+       
         self._get_prs_fv3 = FrozenStencil(
             func=get_prs_fv3,
             origin=self.grid.grid_indexing.origin_full(),
@@ -216,9 +216,9 @@ class Physics:
             domain=self.grid.grid_indexing.domain_compute(),
         )
         self._microphysics = Microphysics(grid, namelist)
-        self._update_atmos_state = UpdateAtmosphereState(
-            grid, namelist, comm, grid_info
-        )
+        #self._update_atmos_state = UpdateAtmosphereState(
+        #    grid, namelist, comm, grid_info
+        #)
 
     def setup_statein(self):
         self._NQ = 8  # state.nq_tot - spec.namelist.dnats
@@ -226,14 +226,12 @@ class Physics:
         self._nwat = 6  # spec.namelist.nwat
         self._p00 = 1.0e5
 
-    def __call__(self, state):
+    def __call__(self, physics_state: PhysicsState):
       
-        #state = get_namespace(DynamicalCore.arg_specs, state)
-        physics_state = PhysicsState.from_dycore_state(state, self._full_zero_storage)
         self._atmos_phys_driver_statein(
             self._prsik,
             physics_state.phii,
-            self._prsi,
+            physics_state.prsi,
             physics_state.delz,
             physics_state.delp,
             physics_state.qvapor,
@@ -250,7 +248,7 @@ class Physics:
         )
         self._get_prs_fv3(
             physics_state.phii,
-            self._prsi,
+            physics_state.prsi,
             physics_state.pt,
             physics_state.qvapor,
             physics_state.delprsi,
@@ -273,7 +271,7 @@ class Physics:
             physics_state.pt,
             physics_state.delp,
         )
-        microph_state = physics_state.microphysics(self._full_zero_storage)
+        microph_state = physics_state.microphysics
         self._microphysics(microph_state)
         # Fortran uses IPD interface, here we use var_t1 to denote the updated field
         self._update_physics_state_with_tendencies(
@@ -310,5 +308,5 @@ class Physics:
             self._dt_atmos,
         )
         # [TODO]: allow update_atmos_state call when grid variables are ready
-        self._update_atmos_state(state, physics_state, self._prsi)
+        #self._update_atmos_state(state, physics_state, self._prsi)
 
