@@ -71,14 +71,31 @@ class PhysicsState:
             initial_storages[field.name] = quantity_factory.zeros([fv3util.X_DIM, fv3util.Y_DIM, fv3util.Z_DIM],  field.metadata["units"], dtype=float).storage
         return cls(**initial_storages, quantity_factory=quantity_factory)
     
-    #intended for the case of not copying, reusing the same variables in the dycore and physics
+   
     @classmethod
-    def init_from_dycore(cls, quantity_factory, dycore_state):
-        initial_storages = {}
-        dycore_fields = fields(DycoreState)
-        for field in fields(cls):
-            if field.metadata["from_dycore"]:
-                initial_storages[field.name] = getattr(dycore_state, field.name)
-            else:
-                initial_storages[field.name] = quantity_factory.zeros([fv3util.X_DIM, fv3util.Y_DIM, fv3util.Z_DIM],  field.metadata["units"], dtype=float).storage
-        return cls(**initial_storages, quantity_factory=quantity_factory)
+    def init_from_numpy_arrays(cls, dict_of_numpy_arrays, quantity_factory):
+        state = cls.init_empty(quantity_factory)
+        field_names = [field.name for field in fields(cls)]
+        for variable_name, data in dict_of_numpy_arrays:
+            if not variable_name in field_names:
+                raise KeyError(variable_name + ' is provided, but not part of the dycore state')
+            getattr(state, variable_name).data[:] = data
+        for field_name in field_names:
+            if not field_name in dict_of_numpy_arrays.keys():
+                raise KeyError(field_name + ' is not included in the provided dictionary of numpy arrays')
+        return state
+
+
+    @classmethod
+    def init_from_quantities(cls, dict_of_quantities):
+        field_names = [field.name for field in fields(cls)]
+        for variable_name, data in dict_of_quantities:
+            if not variable_name in field_names:
+                raise KeyError(variable_name + ' is provided, but not part of the dycore state')
+            getattr(state, variable_name).data[:] = data
+        for field_name in field_names:
+            if not field_name in dict_of_quantities.keys():
+                raise KeyError(field_name + ' is not included in the provided dictionary of quantities')
+            elif not isinstance(dict_of_quantities[field_name], fv3util.Quantity):
+                raise TypeError(field_name + ' is not a Quantity, but instead a ' + type(dict_of_quantities[field_name]))
+        return cls(**dict_of_quantities, quantity_factory=None)
