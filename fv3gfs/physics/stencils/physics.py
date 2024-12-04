@@ -20,6 +20,7 @@ from gt4py.gtscript import (
 )
 import numpy as np  # used for debugging only
 from fv3core.stencils.fv_dynamics import DynamicalCore  # need argspecs for state
+import tensorflow as tf
 
 
 def atmos_phys_driver_statein(
@@ -223,6 +224,8 @@ class Physics:
         self._update_atmos_state = UpdateAtmosphereState(
             stencil_factory, grid, namelist, comm, grid_info
         )
+        self._emulation_dict = {}
+        self._emulation_model = tf.keras.models.load_model("/port_dev/model.tf")
 
     def setup_statein(self):
         self._NQ = 8  # state.nq_tot - spec.namelist.dnats
@@ -234,6 +237,23 @@ class Physics:
         self._ptop = state["ak"][0]
         self._pktop = (self._ptop / self._p00) ** KAPPA
         self._pk0inv = (1.0 / self._p00) ** KAPPA
+
+    def unpack_predictions(self, predictions, output_names, np1, np2):
+
+        if len(output_names) == 1:
+            # single output model doesn't return a list
+            # zip would start unpacking array rows
+            model_outputs = {output_names[0]: predictions.T}
+        else:
+            model_outputs = {
+                name: output.T  # transposed adjust
+                for name, output in zip(output_names, predictions)
+            }
+        for name in model_outputs.keys():
+            model_outputs[name] = np.reshape(
+                model_outputs[name], (np1, np2, self.grid.npz)
+            )[:, :, ::-1]
+        return model_outputs
 
     def __call__(self, state: dict):
         self.setup_const_from_state(state)
@@ -273,51 +293,75 @@ class Physics:
             physics_state.phii,
             physics_state.phil,
         )
-        self._prepare_microphysics(
-            physics_state.dz,
-            physics_state.phii,
-            physics_state.wmp,
-            physics_state.omga,
-            physics_state.qvapor,
-            physics_state.pt,
-            physics_state.delp,
+        np1 = self.grid.npx + self.grid.halo * 2
+        np2 = self.grid.npy + self.grid.halo * 2
+        npx_npy = np1 * np2
+        self._emulation_dict["air_temperature_input"] = np.reshape(
+            physics_state.pt[:, :, 0:-1], (npx_npy, self.grid.npz)
+        )[:, ::-1].T
+        self._emulation_dict["specific_humidity_input"] = np.reshape(
+            physics_state.qvapor[:, :, 0:-1], (npx_npy, self.grid.npz)
+        )[:, ::-1].T
+        self._emulation_dict["cloud_water_mixing_ratio_input"] = np.reshape(
+            physics_state.qliquid[:, :, 0:-1], (npx_npy, self.grid.npz)
+        )[:, ::-1].T
+        predictions = self._emulation_model(self._emulation_dict)
+        model_outputs = self.unpack_predictions(
+            predictions, self._emulation_model.output_names, np1, np2
         )
-        microph_state = physics_state.microphysics(self._full_zero_storage)
-        self._microphysics(microph_state)
-        # Fortran uses IPD interface, here we use var_t1 to denote the updated field
-        self._update_physics_state_with_tendencies(
-            physics_state.qvapor,
-            physics_state.qliquid,
-            physics_state.qrain,
-            physics_state.qice,
-            physics_state.qsnow,
-            physics_state.qgraupel,
-            physics_state.qcld,
-            physics_state.pt,
-            physics_state.ua,
-            physics_state.va,
-            microph_state.qv_dt,
-            microph_state.ql_dt,
-            microph_state.qr_dt,
-            microph_state.qi_dt,
-            microph_state.qs_dt,
-            microph_state.qg_dt,
-            microph_state.qa_dt,
-            microph_state.pt_dt,
-            microph_state.udt,
-            microph_state.vdt,
-            physics_state.qvapor_t1,
-            physics_state.qliquid_t1,
-            physics_state.qrain_t1,
-            physics_state.qice_t1,
-            physics_state.qsnow_t1,
-            physics_state.qgraupel_t1,
-            physics_state.qcld_t1,
-            physics_state.pt_t1,
-            physics_state.ua_t1,
-            physics_state.va_t1,
-            self._dt_atmos,
-        )
+        physics_state.pt_t1[:, :, 0:-1] = model_outputs["air_temperature_output"][
+            :, :, :
+        ]
+        physics_state.qvapor_t1[:, :, 0:-1] = model_outputs["specific_humidity_output"][
+            :, :, :
+        ]
+        physics_state.qliquid_t1[:, :, 0:-1] = model_outputs[
+            "cloud_water_mixing_ratio_output"
+        ][:, :, :]
+        # self._prepare_microphysics(
+        #     physics_state.dz,
+        #     physics_state.phii,
+        #     physics_state.wmp,
+        #     physics_state.omga,
+        #     physics_state.qvapor,
+        #     physics_state.pt,
+        #     physics_state.delp,
+        # )
+        # microph_state = physics_state.microphysics(self._full_zero_storage)
+        # self._microphysics(microph_state)
+        # # Fortran uses IPD interface, here we use var_t1 to denote the updated field
+        # self._update_physics_state_with_tendencies(
+        #     physics_state.qvapor,
+        #     physics_state.qliquid,
+        #     physics_state.qrain,
+        #     physics_state.qice,
+        #     physics_state.qsnow,
+        #     physics_state.qgraupel,
+        #     physics_state.qcld,
+        #     physics_state.pt,
+        #     physics_state.ua,
+        #     physics_state.va,
+        #     microph_state.qv_dt,
+        #     microph_state.ql_dt,
+        #     microph_state.qr_dt,
+        #     microph_state.qi_dt,
+        #     microph_state.qs_dt,
+        #     microph_state.qg_dt,
+        #     microph_state.qa_dt,
+        #     microph_state.pt_dt,
+        #     microph_state.udt,
+        #     microph_state.vdt,
+        #     physics_state.qvapor_t1,
+        #     physics_state.qliquid_t1,
+        #     physics_state.qrain_t1,
+        #     physics_state.qice_t1,
+        #     physics_state.qsnow_t1,
+        #     physics_state.qgraupel_t1,
+        #     physics_state.qcld_t1,
+        #     physics_state.pt_t1,
+        #     physics_state.ua_t1,
+        #     physics_state.va_t1,
+        #     self._dt_atmos,
+        # )
         # [TODO]: allow update_atmos_state call when grid variables are ready
         self._update_atmos_state(state, physics_state, self._prsi)
-
